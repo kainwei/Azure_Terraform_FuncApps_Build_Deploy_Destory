@@ -1,0 +1,78 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+
+variables:
+  terraformDirectory: './Terraform'
+  RESOURCE_GROUP_NAME: 'pysendmailtfstate'
+  STORAGE_ACCOUNT_NAME: 'pysendmailtfstateeit'
+  CONTAINER_NAME: 'tfstate'
+
+stages:
+  - stage: deploy
+    displayName: Deploy terraform
+    jobs:
+      - job: terraform_plan
+        displayName: Terraform plan
+        pool:
+          vmImage: 'ubuntu-18.04'
+        steps:
+          - script: |
+              az login --service-principal      \
+                --username $ARM_CLIENT_ID       \
+                --password $(ARM_CLIENT_SECRET) \
+                --tenant $ARM_TENANT_ID         \
+            displayName: 'az login'
+            env:
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+
+          - script: |
+              terraform init
+            displayName: 'init'
+            env:
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+              mailpw: $(mailpw)
+            workingDirectory: $(terraformDirectory)
+
+          - script: |
+              terraform plan -destroy -out ./terraform.tfplan
+              #terraform  force-unlock -force 09a76131-b753-063f-f095-d65e120a2225  
+            displayName: 'plan'
+            env:
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+              mailpw: $(mailpw)
+            workingDirectory: $(terraformDirectory)
+
+          - script: |
+              terraform apply terraform.tfplan
+            displayName: 'destory'
+            env:
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+            workingDirectory: $(terraformDirectory)
+
+          - script: |
+              if [ $(az group exists --name $(RESOURCE_GROUP_NAME)) == "false" ];then  \
+                echo "$(RESOURCE_GROUP_NAME) is not exist!" ;exit 0;fi && \
+              az group delete --name $RESOURCE_GROUP_NAME   --yes
+            displayName: 'Destroy tfstate storage'
+            env:
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)

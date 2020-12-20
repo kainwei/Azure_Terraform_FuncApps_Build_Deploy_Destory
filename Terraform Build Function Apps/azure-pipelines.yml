@@ -1,0 +1,92 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+
+variables:
+  terraformDirectory: './Terraform'
+  RESOURCE_GROUP_NAME: 'pysendmailtfstate'
+  STORAGE_ACCOUNT_NAME: 'pysendmailtfstateeit'
+  CONTAINER_NAME: 'tfstate'
+
+stages:
+  - stage: deploy
+    displayName: Deploy terraform
+    jobs:
+      - job: terraform_plan
+        displayName: Terraform plan
+        pool:
+          vmImage: 'ubuntu-18.04'
+        steps:
+          - script: |
+              az login --service-principal      \
+                --username $ARM_CLIENT_ID       \
+                --password $(ARM_CLIENT_SECRET) \
+                --tenant $ARM_TENANT_ID &&      \
+              if [ $(az group exists --name $(RESOURCE_GROUP_NAME)) == "true" ];then  \
+                echo "$(RESOURCE_GROUP_NAME) is exist!" ;exit 0;fi && \
+              az group create                   \
+                --name $RESOURCE_GROUP_NAME     \
+                --location australiaeast &&     \
+              az storage account create         \
+                --resource-group $RESOURCE_GROUP_NAME            \
+                --name $STORAGE_ACCOUNT_NAME                     \
+                --sku Standard_LRS                               \
+                --encryption-services blob &&                    \
+              ACCOUNT_KEY=$(az storage account keys list         \
+                --resource-group $RESOURCE_GROUP_NAME            \
+                --account-name $STORAGE_ACCOUNT_NAME             \
+                --query '[0].value' -o tsv) &&                   \
+              az storage container create --name $CONTAINER_NAME \
+                --account-name $STORAGE_ACCOUNT_NAME             \
+                --account-key $ACCOUNT_KEY &&                    \
+              echo "storage_account_name: $STORAGE_ACCOUNT_NAME" && \
+              echo "container_name: $CONTAINER_NAME" && \
+              echo "access_key: $ACCOUNT_KEY"
+            displayName: 'Build Storage For tfstate'
+            env:
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+
+          - script: |
+              terraform init
+            displayName: 'Terraform init'
+            env:
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+              mailpw: $(mailpw)
+            workingDirectory: $(terraformDirectory)
+
+          - script: |
+              terraform plan -var MAILPW=$(mailpw) -out ./terraform.tfplan
+              #terraform  force-unlock -force 09a76131-b753-063f-f095-d65e120a2225  
+            displayName: 'Terraform plan'
+            env:
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+              mailpw: $(mailpw)
+            workingDirectory: $(terraformDirectory)
+          - publish: ./$(terraformDirectory)/terraform.tfplan
+            artifact: tfplan
+
+          - download: current
+            artifact: tfplan
+          - script: |
+              terraform apply terraform.tfplan
+            displayName: 'Terraform apply'
+            env:
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+              mailpw: $(mailpw)
+            workingDirectory: $(terraformDirectory)
